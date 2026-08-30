@@ -77,11 +77,11 @@ UNIDADE = {"temp": "C", "ur": "%", "luz": "lux"}
 # LDR para lux e aproximada, e um numero com 4 digitos finge uma precisao que o
 # sensor nao tem. O produtor precisa saber se esta claro ou escuro, nao o valor.
 ROTULO_LUZ = {
-    (VERMELHO, "baixo"): "luminosidade muito baixa",
-    (AMARELO, "baixo"): "luminosidade baixa",
-    (VERDE, None): "luminosidade boa",
-    (AMARELO, "alto"): "luminosidade alta",
-    (VERMELHO, "alto"): "luminosidade muito alta",
+    (VERMELHO, "baixo"): "Iluminação muito baixa",
+    (AMARELO, "baixo"): "Iluminação baixa",
+    (VERDE, None): "Iluminação boa",
+    (AMARELO, "alto"): "Iluminação alta",
+    (VERMELHO, "alto"): "Iluminação muito alta",
 }
 ROTULO_NOITE = "escuro (noite)"
 
@@ -90,7 +90,7 @@ ROTULO_NOITE = "escuro (noite)"
 ROTULO_LUZ_CURTO = {
     (VERMELHO, "baixo"): "Escassa",
     (AMARELO, "baixo"): "Fraca",
-    (VERDE, None): "Boa",
+    (VERDE, None): "Adequada",
     (AMARELO, "alto"): "Forte",
     (VERMELHO, "alto"): "Excessiva",
 }

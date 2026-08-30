@@ -9,6 +9,7 @@ Uso:
     python -m app.collector --porta /dev/cu.usbserial-1140
     python -m app.collector --fake    # sem Arduino, gera leituras
 """
+
 import argparse
 import json
 import os
@@ -20,7 +21,6 @@ from datetime import datetime
 
 from app import config, db, llm
 from app.rules import Avaliador, Leitura, contexto_para_llm
-
 
 # "Umidade: 63.30 %  Temperatura: 29.10 C  Luz: 151 (ambiente iluminado)"
 _TEXTO = re.compile(
@@ -51,7 +51,7 @@ def _para_lux(bruto):
         frac = 1.0 - frac
     frac = min(1.0, max(0.0, frac))
     razao = config.LUZ_LUX_MAX / config.LUZ_LUX_MIN
-    return round(config.LUZ_LUX_MIN * (razao ** frac), 1)
+    return round(config.LUZ_LUX_MIN * (razao**frac), 1)
 
 
 def _parse(linha: str):
@@ -98,8 +98,11 @@ def _descobrir_porta():
     from serial.tools import list_ports
 
     candidatas = [
-        p.device for p in list_ports.comports()
-        if any(marca in p.device for marca in ("usbserial", "usbmodem", "ttyUSB", "ttyACM"))
+        p.device
+        for p in list_ports.comports()
+        if any(
+            marca in p.device for marca in ("usbserial", "usbmodem", "ttyUSB", "ttyACM")
+        )
     ]
     if not candidatas:
         raise RuntimeError(
@@ -107,8 +110,10 @@ def _descobrir_porta():
             "Conecte o Arduino ou ajuste SERIAL_PORT no .env" % config.SERIAL_PORT
         )
     if config.SERIAL_PORT:
-        print("[collector] SERIAL_PORT=%s nao existe - usando %s"
-              % (config.SERIAL_PORT, candidatas[0]))
+        print(
+            "[collector] SERIAL_PORT=%s nao existe - usando %s"
+            % (config.SERIAL_PORT, candidatas[0])
+        )
     return candidatas[0]
 
 
@@ -149,10 +154,15 @@ def _fonte_serial(porta_nome=None):
                     continue
                 ignoradas += 1
                 if ignoradas in (5, 50) or ignoradas % 500 == 0:
-                    rotulo = ("sensor sem responder" if _FALHA.search(texto)
-                              else "linhas nao reconhecidas")
-                    print("[collector] %d %s. Ultima: %r"
-                          % (ignoradas, rotulo, texto[:120]))
+                    rotulo = (
+                        "sensor sem responder"
+                        if _FALHA.search(texto)
+                        else "linhas nao reconhecidas"
+                    )
+                    print(
+                        "[collector] %d %s. Ultima: %r"
+                        % (ignoradas, rotulo, texto[:120])
+                    )
 
         except (OSError, RuntimeError) as e:
             # SerialException herda de OSError; RuntimeError vem de _descobrir_porta
@@ -178,12 +188,15 @@ def _fonte_fake():
             subindo = False
         if ur < 65:
             subindo = True
-        yield Leitura(
-            ts=datetime.now(),
-            temp_c=round(random.uniform(15, 21), 1),
-            ur=round(min(99, max(40, ur)), 1),
-            luz=round(random.uniform(20000, 60000)),
-        ), None
+        yield (
+            Leitura(
+                ts=datetime.now(),
+                temp_c=round(random.uniform(15, 21), 1),
+                ur=round(min(99, max(40, ur)), 1),
+                luz=round(random.uniform(20000, 60000)),
+            ),
+            None,
+        )
         time.sleep(2)
 
 
@@ -199,7 +212,7 @@ def main():
     fonte = _fonte_fake() if args.fake else _fonte_serial(args.porta)
 
     dias_escuros, checado_em = 0, 0.0
-    ultimo_alerta = 0.0
+    ultima_chamada_llm = 0.0
 
     for leitura, porta in fonte:
         # quantos dias seguidos de luz fraca - so vale a pena recalcular de vez
@@ -211,8 +224,12 @@ def main():
         res = aval.avaliar(leitura, dias_luz_baixa=dias_escuros)
 
         db.salvar_medicao(
-            con, leitura.ts.isoformat(sep=" ", timespec="seconds"),
-            leitura.temp_c, leitura.ur, leitura.luz, res.estado,
+            con,
+            leitura.ts.isoformat(sep=" ", timespec="seconds"),
+            leitura.temp_c,
+            leitura.ur,
+            leitura.luz,
+            res.estado,
         )
 
         # devolve a cor para o Arduino: a logica vive num lugar so
@@ -223,37 +240,77 @@ def main():
                 print("[collector] falha ao escrever na serial: %s" % e)
 
         from app.rules import rotulo_luz
-        print("UR=%5.1f  T=%4.1f  %-26s %s/%s  ->  %s%s"
-              % (leitura.ur, leitura.temp_c,
-                 rotulo_luz(leitura.luz, leitura.ts, dias_escuros),
-                 res.estacao, res.ciclo, res.estado,
-                 "  << MUDOU" if res.mudou else ""))
+
+        print(
+            "UR=%5.1f  T=%4.1f  %-26s %s/%s  ->  %s%s"
+            % (
+                leitura.ur,
+                leitura.temp_c,
+                rotulo_luz(leitura.luz, leitura.ts, dias_escuros),
+                res.estacao,
+                res.ciclo,
+                res.estado,
+                "  << MUDOU" if res.mudou else "",
+            )
+        )
 
         if not res.mudou:
             continue
 
-        # anti-spam: numa demo o estado pode oscilar; nao vale um alerta por segundo
-        if time.time() - ultimo_alerta < config.SEGUNDOS_ENTRE_ALERTAS:
-            print("[collector] mudou para %s, mas o alerta anterior foi ha pouco"
-                  % res.estado)
-            continue
-        ultimo_alerta = time.time()
-
         ts = leitura.ts.isoformat(sep=" ", timespec="seconds")
+
+        # Toda mudança confirmada deve ser registrada, mesmo durante o antispam.
         evento_id = db.salvar_evento(
-            con, ts, res.anterior, res.estado, res.motivo,
+            con,
+            ts,
+            res.anterior,
+            res.estado,
+            res.motivo,
             round(res.segundos_risco / 60, 1),
         )
 
-        ctx = contexto_para_llm(res, leitura)
-        try:
-            texto = llm.gerar_alerta(ctx)
-        except Exception as e:  # noqa: BLE001
-            print("[collector] LLM indisponivel (%s) - usando texto de reserva" % e)
-            texto = "Situacao mudou para %s. %s. O que fazer: %s." % (
-                res.estado, res.motivo, res.acao or "acompanhar")
+        # Ao voltar ao normal, a interface mostra que não há alerta ativo.
+        if res.estado == "ok":
+            print("[collector] condições normalizadas; nenhum alerta ativo")
+            continue
 
-        db.salvar_mensagem(con, config.SESSION_ID, "system_alert", texto, ts, evento_id)
+        rotulo_estado = {
+            "atencao": "ATENÇÃO ÀS CONDIÇÕES",
+            "agir": "ALERTA CRÍTICO",
+        }.get(res.estado, res.estado.upper())
+
+        # Mensagem coerente caso o LLM esteja indisponível ou em intervalo.
+        texto = "%s. %s. O que fazer: %s." % (
+            rotulo_estado,
+            res.motivo,
+            res.acao or "acompanhar as condições",
+        )
+
+        agora = time.time()
+        pode_chamar_llm = agora - ultima_chamada_llm >= config.SEGUNDOS_ENTRE_ALERTAS
+
+        if pode_chamar_llm:
+            ultima_chamada_llm = agora
+            ctx = contexto_para_llm(res, leitura)
+
+            try:
+                texto = llm.gerar_alerta(ctx)
+            except Exception as e:  # noqa: BLE001
+                print("[collector] LLM indisponível (%s) - usando texto de reserva" % e)
+        else:
+            print(
+                "[collector] LLM em intervalo; usando alerta local para %s" % res.estado
+            )
+
+        db.salvar_mensagem(
+            con,
+            config.SESSION_ID,
+            "system_alert",
+            texto,
+            ts,
+            state_event_id=evento_id,
+        )
+
         print("[alerta] %s" % texto)
 
 
