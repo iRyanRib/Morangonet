@@ -107,19 +107,19 @@ def _formatar_data_hora(ts):
 
 
 def _formatar_faixa(faixas, periodo):
-    """Formata as referências sem derrubar a tela se o contrato vier incompleto."""
+    """Formata a faixa adequada ao período atual."""
     try:
         umidade = faixas[periodo]["umidade_pct"]
         temperatura = faixas[periodo]["temperatura_c"]
-        return "%s · UR %g–%g%% · %g–%g °C" % (
-            periodo.capitalize(),
+
+        return "UR %g–%g%% · Temperatura %g–%g °C" % (
             umidade[1],
             umidade[2],
             temperatura[1],
             temperatura[2],
         )
     except (IndexError, KeyError, TypeError):
-        return "%s · referências indisponíveis" % periodo.capitalize()
+        return "Referências indisponíveis"
 
 
 def _normalizar_estado_sensor(estado):
@@ -458,57 +458,6 @@ def _injetar_estilos():
                 margin-top: 0.42rem;
             }
 
-            .automatic-alert {
-                align-items: flex-start;
-                background: var(--mn-surface);
-                border: 1px solid var(--mn-border);
-                border-radius: 14px;
-                display: flex;
-                gap: 0.8rem;
-                padding: 0.95rem 1rem;
-            }
-
-            .automatic-alert-active {
-                background: linear-gradient(145deg, rgba(255, 114, 122, 0.08), transparent 64%), var(--mn-surface);
-                border-color: #613138;
-            }
-
-            .automatic-alert-empty {
-                background: linear-gradient(145deg, rgba(104, 211, 145, 0.055), transparent 64%), var(--mn-surface);
-                border-color: #294D39;
-            }
-
-            .automatic-alert-icon {
-                align-items: center;
-                background: #FF727A;
-                border-radius: 999px;
-                color: #FFFFFF;
-                display: flex;
-                flex: 0 0 1.65rem;
-                font-size: 0.8rem;
-                font-weight: 800;
-                height: 1.65rem;
-                justify-content: center;
-            }
-
-            .automatic-alert-empty .automatic-alert-icon {
-                background: #286E4B;
-            }
-
-            .automatic-alert-title {
-                color: var(--mn-text);
-                font-size: 0.88rem;
-                font-weight: 700;
-                line-height: 1.35;
-            }
-
-            .automatic-alert-content {
-                color: var(--mn-text-soft);
-                font-size: 0.84rem;
-                line-height: 1.5;
-                margin-top: 0.2rem;
-            }
-
             [data-testid="stChatMessage"] {
                 background: rgba(17, 24, 22, 0.82);
                 border: 1px solid var(--mn-border);
@@ -705,57 +654,6 @@ def _mensagem_vazia():
             "Experimente perguntar: **Como está a estufa agora?**"
         )
 
-
-def _separar_mensagens(mensagens):
-    """Separa o alerta mais recente das mensagens normais da conversa."""
-    mensagens = list(mensagens or [])
-    alerta = next(
-        (
-            mensagem
-            for mensagem in reversed(mensagens)
-            if mensagem["role"] == "system_alert"
-        ),
-        None,
-    )
-    conversa = [
-        mensagem for mensagem in mensagens if mensagem["role"] != "system_alert"
-    ]
-    return alerta, conversa
-
-
-def _cartao_alerta(alerta):
-    if not alerta:
-        st.markdown(
-            """
-            <div class="automatic-alert automatic-alert-empty">
-                <div class="automatic-alert-icon">✓</div>
-                <div>
-                    <div class="automatic-alert-title">Nenhum alerta no momento</div>
-                    <div class="automatic-alert-content">
-                        Todas as condições confirmadas estão dentro das faixas esperadas.
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        return
-
-    conteudo = html.escape(str(alerta["content"])).replace("\n", "<br>")
-    st.markdown(
-        """
-        <div class="automatic-alert automatic-alert-active">
-            <div class="automatic-alert-icon">!</div>
-            <div>
-                <div class="automatic-alert-title">Alerta automático mais recente</div>
-                <div class="automatic-alert-content">%s</div>
-            </div>
-        </div>
-        """ % conteudo,
-        unsafe_allow_html=True,
-    )
-
-
 st.set_page_config(
     page_title="MorangoNet",
     page_icon="🍓",
@@ -839,47 +737,46 @@ def painel():
     horario = _formatar_data_hora(ultima["ts"])
 
     if idade is None:
-        st.warning(
-            "A leitura foi recebida, mas o horário é inválido. Verifique o relógio "
-            "e o formato enviado pelo coletor."
-        )
+        st.caption("Horário da última leitura indisponível.")
+        
     elif idade > 60:
         minutos = max(1, int(idade // 60))
-        st.warning(
-            "Os dados podem estar desatualizados: última leitura há %d min (%s). "
-            "Verifique se o coletor está em execução." % (minutos, horario)
+        st.caption(
+            "○ Dados sem atualização há %d min · Última leitura: %s"
+            % (minutos, horario) 
         )
+        
     else:
         st.markdown(
-            '<div class="reading-time">● Dados ativos · Última leitura: %s · Atualização a cada %d s</div>'
+            '<div class="reading-time">'
+            "● Dados ativos · Última leitura: %s · Atualização a cada %d s"
+            "</div>"
             % (horario, SEGUNDOS_REFRESH),
             unsafe_allow_html=True,
         )
 
-
 @st.fragment(run_every=SEGUNDOS_REFRESH)
 def conversa():
+    if "inicio_conversa_id" not in st.session_state:
+        with closing(db.conectar()) as con:
+            registro = con.execute(
+                """
+                SELECT COALESCE(MAX(id), 0) AS ultimo_id
+                FROM session_messages
+                WHERE session_id=?
+                """,
+                (config.SESSION_ID,),
+            ).fetchone()
+
+        st.session_state["inicio_conversa_id"] = registro["ultimo_id"]
+
     with closing(db.conectar()) as con:
-        mensagens = db.mensagens(con, config.SESSION_ID)
-        ultima = db.ultima_medicao(con)
+        mensagens = db.mensagens(
+            con,
+            config.SESSION_ID,
+            depois_de=st.session_state["inicio_conversa_id"],
+        )
 
-    alerta, mensagens = _separar_mensagens(mensagens)
-
-    # O estado global já passou pela confirmação de leituras do rules.py.
-    estado_atual = ultima["estado"] if ultima and ultima["estado"] else "indisponivel"
-
-    # Um alerta antigo continua no banco, mas não deve aparecer como ativo
-    # quando as condições já voltaram ao normal.
-    if estado_atual == "ok":
-        alerta = None
-
-    st.markdown(
-        '<div class="section-label">Alerta automático</div>',
-        unsafe_allow_html=True,
-    )
-    _cartao_alerta(alerta)
-
-    st.divider()
     st.markdown(
         '<div class="section-label">Converse com o MorangoNet</div>',
         unsafe_allow_html=True,
@@ -891,10 +788,53 @@ def conversa():
         if mensagem["role"] == "user":
             with st.chat_message("user", avatar="👨‍🌾"):
                 st.markdown(mensagem["content"])
+
         else:
             with st.chat_message("assistant", avatar="🍓"):
+                if mensagem["role"] == "system_alert":
+                    st.markdown("**Alerta automático**")
+
                 st.markdown(mensagem["content"])
 
+@st.fragment(run_every=60)
+def referencias_atuais():
+    agora = datetime.now()
+    faixas = rules.faixas_do_momento(agora)
+    estacao = rules.estacao_de(agora)
+
+    with closing(db.conectar()) as con:
+        ultima = db.ultima_medicao(con)
+
+    if ultima and ultima["luz"] is not None:
+        periodo = rules.ciclo_de(ultima["luz"])
+    else:
+        periodo = "dia" if 6 <= agora.hour < 18 else "noite"
+
+    icone_periodo = "☀️" if periodo == "dia" else "🌙"
+
+    st.caption(
+        "📅 %s · %s"
+        % (
+            agora.strftime("%d/%m/%Y"),
+            estacao.capitalize(),
+        )
+    )
+
+    st.caption(
+        "%s %s · %s"
+        % (
+            icone_periodo,
+            periodo.capitalize(),
+            agora.strftime("%H:%M"),
+        )
+    )
+
+    st.caption(_formatar_faixa(faixas, periodo))
+
+    st.caption(
+        "O estado muda após %d leituras consecutivas."
+        % config.LEITURAS_CONFIRMA
+    )
 
 painel()
 
@@ -949,25 +889,36 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Referências atuais")
-
-    agora = datetime.now()
-    faixas = rules.faixas_do_momento(agora)
-    st.caption("Estação considerada: %s" % rules.estacao_de(agora))
-    st.caption(_formatar_faixa(faixas, "dia"))
-    st.caption(_formatar_faixa(faixas, "noite"))
-    st.caption(
-        "O estado muda após %d leituras consecutivas." % config.LEITURAS_CONFIRMA
-    )
-
+    referencias_atuais()
+    
     st.divider()
+    
     if st.button("Atualizar agora", use_container_width=True):
         st.rerun()
 
-    if st.button("Limpar conversa", use_container_width=True, type="secondary"):
+    if st.button(
+        "Limpar conversa",
+        use_container_width=True,
+        type="secondary",
+    ):
         with closing(db.conectar()) as con:
             con.execute(
-                "DELETE FROM session_messages " "WHERE session_id=? AND role<>?",
+                """
+                DELETE FROM session_messages
+                WHERE session_id=? AND role<>?
+                """,
                 (config.SESSION_ID, "system_alert"),
             )
             con.commit()
+
+            registro = con.execute(
+                """
+                SELECT COALESCE(MAX(id), 0) AS ultimo_id
+                FROM session_messages
+                WHERE session_id=?
+                """,
+                (config.SESSION_ID,),
+            ).fetchone()
+
+        st.session_state["inicio_conversa_id"] = registro["ultimo_id"]
         st.rerun()
