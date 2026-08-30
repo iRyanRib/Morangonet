@@ -778,7 +778,7 @@ def conversa():
         )
 
     st.markdown(
-        '<div class="section-label">Converse com o MorangoNet</div>',
+        '<div class="section-label">Converse com a Moran</div>',
         unsafe_allow_html=True,
     )
 
