@@ -199,7 +199,7 @@ def main():
     fonte = _fonte_fake() if args.fake else _fonte_serial(args.porta)
 
     dias_escuros, checado_em = 0, 0.0
-    ultimo_alerta = 0.0
+    ultima_chamada_llm = 0.0
 
     for leitura, porta in fonte:
         # quantos dias seguidos de luz fraca - so vale a pena recalcular de vez
@@ -232,28 +232,67 @@ def main():
         if not res.mudou:
             continue
 
-        # anti-spam: numa demo o estado pode oscilar; nao vale um alerta por segundo
-        if time.time() - ultimo_alerta < config.SEGUNDOS_ENTRE_ALERTAS:
-            print("[collector] mudou para %s, mas o alerta anterior foi ha pouco"
-                  % res.estado)
-            continue
-        ultimo_alerta = time.time()
-
         ts = leitura.ts.isoformat(sep=" ", timespec="seconds")
+
+        # Toda mudança confirmada deve ser registrada, mesmo durante o antispam.
         evento_id = db.salvar_evento(
-            con, ts, res.anterior, res.estado, res.motivo,
+            con,
+            ts,
+            res.anterior,
+            res.estado,
+            res.motivo,
             round(res.segundos_risco / 60, 1),
         )
 
-        ctx = contexto_para_llm(res, leitura)
-        try:
-            texto = llm.gerar_alerta(ctx)
-        except Exception as e:  # noqa: BLE001
-            print("[collector] LLM indisponivel (%s) - usando texto de reserva" % e)
-            texto = "Situacao mudou para %s. %s. O que fazer: %s." % (
-                res.estado, res.motivo, res.acao or "acompanhar")
+        # Ao voltar ao normal, a interface mostra que não há alerta ativo.
+        if res.estado == "ok":
+            print("[collector] condições normalizadas; nenhum alerta ativo")
+            continue
 
-        db.salvar_mensagem(con, config.SESSION_ID, "system_alert", texto, ts, evento_id)
+        rotulo_estado = {
+            "atencao": "ATENÇÃO ÀS CONDIÇÕES",
+            "agir": "ALERTA CRÍTICO",
+        }.get(res.estado, res.estado.upper())
+
+        # Mensagem coerente caso o LLM esteja indisponível ou em intervalo.
+        texto = "%s. %s. O que fazer: %s." % (
+            rotulo_estado,
+            res.motivo,
+            res.acao or "acompanhar as condições",
+        )
+
+        agora = time.time()
+        pode_chamar_llm = (
+            agora - ultima_chamada_llm
+            >= config.SEGUNDOS_ENTRE_ALERTAS
+        )
+
+        if pode_chamar_llm:
+            ultima_chamada_llm = agora
+            ctx = contexto_para_llm(res, leitura)
+
+            try:
+                texto = llm.gerar_alerta(ctx)
+            except Exception as e:  # noqa: BLE001
+                print(
+                    "[collector] LLM indisponível (%s) - usando texto de reserva"
+                    % e
+                )
+        else:
+            print(
+                "[collector] LLM em intervalo; usando alerta local para %s"
+                % res.estado
+            )
+
+        db.salvar_mensagem(
+            con,
+            config.SESSION_ID,
+            "system_alert",
+            texto,
+            ts,
+            state_event_id=evento_id,
+        )
+
         print("[alerta] %s" % texto)
 
 
