@@ -1,0 +1,4 @@
+pyserial==3.5
+streamlit==1.40.0
+groq==1.7.0
+python-dotenv==1.0.1

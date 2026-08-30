@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Segredos - a GROQ_API_KEY mora aqui. Use .env.example como modelo.
+.env
+.env.local
+
+# Dados gerados em execucao (banco SQLite + arquivos do modo WAL)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Sistema operacional e editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Arduino
+firmware/**/build/
